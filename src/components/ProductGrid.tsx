@@ -23,14 +23,8 @@ export function ProductGrid() {
         .from('products')
         .select(`
           *,
-          (
-            SELECT 
-              COALESCE(AVG(rating), 0) as average_rating,
-              COUNT(*) as review_count
-            FROM reviews
-            WHERE reviews.product_id = products.id
-            AND reviews.approved = true
-          )
+          average_rating:reviews(rating, approved).avg(rating).filter(approved.eq(true)),
+          review_count:reviews(approved).count().filter(approved.eq(true))
         `)
         .order('created_at', { ascending: false });
 
