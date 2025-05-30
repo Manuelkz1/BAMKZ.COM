@@ -1,31 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  Image,
-  StyleSheet,
-  TouchableOpacity,
-  FlatList,
-  RefreshControl,
-  ActivityIndicator,
-} from 'react-native';
-import { Link } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useCartStore } from '../stores/cartStore';
-import { Product } from '../types/index';
-import { theme } from '../constants/theme';
 import { Star } from 'lucide-react';
+import { useDebounce } from '../hooks/useDebounce';
 
 export function ProductGrid() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm] = useDebounce(searchInput, 300);
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const [categories, setCategories] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState<'price_asc' | 'price_desc' | 'newest'>('newest');
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [categories, setCategories] = useState([]);
+  const [sortBy, setSortBy] = useState('newest');
   const cartStore = useCartStore();
 
   const loadProducts = async () => {
@@ -56,17 +44,11 @@ export function ProductGrid() {
     }
   };
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadProducts();
-    setRefreshing(false);
-  }, []);
-
   useEffect(() => {
     loadProducts();
   }, []);
 
-  const renderStars = (rating: number) => {
+  const renderStars = (rating) => {
     const stars = [];
     const fullStars = Math.floor(rating);
     const hasHalfStar = rating % 1 >= 0.5;
@@ -101,162 +83,83 @@ export function ProductGrid() {
     return stars;
   };
 
-  const renderProduct = ({ item: product }: { item: Product }) => (
-    <Link href={`/product/${product.id}`} asChild>
-      <TouchableOpacity style={styles.productCard}>
-        <Image
-          source={{ uri: product.images[0] }}
-          style={styles.productImage}
-          resizeMode="cover"
-        />
-        <View style={styles.productInfo}>
-          <Text style={styles.productName} numberOfLines={1}>
-            {product.name}
-          </Text>
-          <Text style={styles.productPrice}>
-            ${product.price.toFixed(2)}
-          </Text>
-          
-          {/* Rating Section */}
-          <div className="flex items-center mt-1">
-            <div className="flex items-center">
-              {renderStars(product.average_rating || 0)}
-            </div>
-            <span className="ml-2 text-sm text-gray-600">
-              {product.review_count ? (
-                <>
-                  ({product.average_rating?.toFixed(1)}) 
-                  <span className="text-gray-500">
-                    {product.review_count} {product.review_count === 1 ? 'reseña' : 'reseñas'}
-                  </span>
-                </>
-              ) : (
-                <span className="text-gray-500">Sin calificaciones</span>
-              )}
-            </span>
-          </div>
-
-          {product.stock > 0 ? (
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={(e) => {
-                e.preventDefault();
-                cartStore.addItem(product, 1);
-              }}
-            >
-              <Text style={styles.addButtonText}>Agregar al carrito</Text>
-            </TouchableOpacity>
-          ) : (
-            <Text style={styles.outOfStock}>Agotado</Text>
-          )}
-        </View>
-      </TouchableOpacity>
-    </Link>
-  );
-
   if (loading) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
+      <div className="flex justify-center items-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.centerContainer}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadProducts}>
-          <Text style={styles.retryButtonText}>Reintentar</Text>
-        </TouchableOpacity>
-      </View>
+      <div className="flex flex-col items-center justify-center min-h-[400px]">
+        <p className="text-red-600 mb-4">{error}</p>
+        <button
+          onClick={loadProducts}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+        >
+          Reintentar
+        </button>
+      </div>
     );
   }
 
   return (
-    <FlatList
-      data={products}
-      renderItem={renderProduct}
-      keyExtractor={(item) => item.id}
-      numColumns={2}
-      contentContainerStyle={styles.grid}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    />
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      {products.map((product) => (
+        <div key={product.id} className="bg-white rounded-lg shadow-md overflow-hidden">
+          <Link to={`/product/${product.id}`} className="block">
+            <div className="aspect-w-1 aspect-h-1 w-full">
+              <img
+                src={product.images[0]}
+                alt={product.name}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <div className="p-4">
+              <h3 className="text-lg font-semibold text-gray-900 truncate">
+                {product.name}
+              </h3>
+              <p className="text-xl font-bold text-indigo-600 mt-1">
+                ${product.price.toFixed(2)}
+              </p>
+              
+              <div className="flex items-center mt-2">
+                <div className="flex items-center">
+                  {renderStars(product.average_rating || 0)}
+                </div>
+                <span className="ml-2 text-sm text-gray-600">
+                  {product.review_count ? (
+                    <>
+                      ({product.average_rating?.toFixed(1)}) 
+                      <span className="text-gray-500">
+                        {product.review_count} {product.review_count === 1 ? 'reseña' : 'reseñas'}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-gray-500">Sin calificaciones</span>
+                  )}
+                </span>
+              </div>
+
+              {product.stock > 0 ? (
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    cartStore.addItem(product, 1);
+                  }}
+                  className="mt-4 w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition-colors"
+                >
+                  Agregar al carrito
+                </button>
+              ) : (
+                <p className="mt-4 text-center text-red-600 py-2">Agotado</p>
+              )}
+            </div>
+          </Link>
+        </div>
+      ))}
+    </div>
   );
 }
-
-const styles = StyleSheet.create({
-  grid: {
-    padding: 10,
-  },
-  productCard: {
-    flex: 1,
-    margin: 5,
-    backgroundColor: 'white',
-    borderRadius: 8,
-    overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  productImage: {
-    width: '100%',
-    height: 150,
-  },
-  productInfo: {
-    padding: 10,
-  },
-  productName: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-    color: theme.colors.text,
-  },
-  productPrice: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: theme.colors.primary,
-    marginBottom: 8,
-  },
-  addButton: {
-    backgroundColor: theme.colors.primary,
-    padding: 8,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  addButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  outOfStock: {
-    color: theme.colors.error,
-    textAlign: 'center',
-    padding: 8,
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  errorText: {
-    color: theme.colors.error,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  retryButton: {
-    backgroundColor: theme.colors.primary,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-  },
-  retryButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-});
