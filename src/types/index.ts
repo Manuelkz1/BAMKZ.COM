@@ -20,6 +20,8 @@ export interface Product {
     payment_url?: string;
   };
   promotion?: Promotion;
+  average_rating?: number;
+  review_count?: number;
 }
 
 export interface CartItem {

@@ -1,311 +1,262 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  Image,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  RefreshControl,
+  ActivityIndicator,
+} from 'react-native';
+import { Link } from 'expo-router';
 import { supabase } from '../lib/supabase';
-import { toast } from 'react-hot-toast';
-import { ShoppingCart, Search, Filter, X, Tag } from 'lucide-react';
 import { useCartStore } from '../stores/cartStore';
-import type { Product } from '../types/index';
-import { useDebounce } from 'use-debounce';
+import { Product } from '../types/index';
+import { theme } from '../constants/theme';
+import { Star } from 'lucide-react';
 
 export function ProductGrid() {
-  const navigate = useNavigate();
-  const cartStore = useCartStore();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm] = useDebounce(searchInput, 300);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [categories, setCategories] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<'price_asc' | 'price_desc' | 'newest'>('newest');
-
-  useEffect(() => {
-    loadProducts();
-  }, [searchTerm, selectedCategory, sortBy]);
+  const cartStore = useCartStore();
 
   const loadProducts = async () => {
     try {
-      setLoading(true);
       setError(null);
-
-      let query = supabase
+      const { data, error: fetchError } = await supabase
         .from('products')
-        .select('*');
-
-      if (searchTerm) {
-        query = query.or(`name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`);
-      }
-
-      if (selectedCategory) {
-        query = query.eq('category', selectedCategory);
-      }
-
-      switch (sortBy) {
-        case 'price_asc':
-          query = query.order('price', { ascending: true });
-          break;
-        case 'price_desc':
-          query = query.order('price', { ascending: false });
-          break;
-        case 'newest':
-          query = query.order('created_at', { ascending: false });
-          break;
-      }
-
-      const { data, error: fetchError } = await query;
+        .select(`
+          *,
+          (
+            SELECT 
+              COALESCE(AVG(rating), 0) as average_rating,
+              COUNT(*) as review_count
+            FROM reviews
+            WHERE reviews.product_id = products.id
+            AND reviews.approved = true
+          )
+        `)
+        .order('created_at', { ascending: false });
 
       if (fetchError) throw fetchError;
-
-      if (!data) {
-        throw new Error('No se recibieron datos del servidor');
-      }
-
-      // Filter products based on allowed payment methods
-      const filteredProducts = data.filter(product => {
-        const methods = product.allowed_payment_methods || {
-          cash_on_delivery: true,
-          card: true
-        };
-        return methods.cash_on_delivery || methods.card;
-      });
-
-      // Load promotions for products
-      const productIds = filteredProducts.map(p => p.id);
-      
-      try {
-        const { data: promotionProducts, error: promotionError } = await supabase
-          .from('promotion_products')
-          .select(`
-            product_id,
-            promotion:promotions(*)
-          `)
-          .in('product_id', productIds)
-          .filter('promotion.active', 'eq', true)
-          .filter('promotion.start_date', 'lte', new Date().toISOString())
-          .filter('promotion.end_date', 'gte', new Date().toISOString());
-          
-        if (!promotionError && promotionProducts) {
-          // Add promotion data to products
-          const productsWithPromotions = filteredProducts.map(product => {
-            const productPromotion = promotionProducts.find(pp => pp.product_id === product.id);
-            if (productPromotion && productPromotion.promotion) {
-              return {
-                ...product,
-                promotion: productPromotion.promotion
-              };
-            }
-            return product;
-          });
-          
-          setProducts(productsWithPromotions);
-        } else {
-          setProducts(filteredProducts);
-        }
-      } catch (error) {
-        console.error('Error loading promotions:', error);
-        setProducts(filteredProducts);
-      }
-
-      const uniqueCategories = Array.from(new Set(data.map(p => p.category).filter(Boolean)));
-      setCategories(uniqueCategories);
-    } catch (error: any) {
+      setProducts(data || []);
+    } catch (error) {
       console.error('Error loading products:', error);
       setError('Error al cargar los productos');
-      toast.error('Error al cargar los productos');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddToCart = (product: Product, event: React.MouseEvent) => {
-    event.preventDefault();
-    cartStore.addItem(product, 1);
-    toast.success('Producto agregado al carrito');
-  };
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadProducts();
+    setRefreshing(false);
+  }, []);
 
-  const handleBuyNow = (product: Product, event: React.MouseEvent) => {
-    event.preventDefault();
-    navigate(`/product/${product.id}`);
-  };
+  useEffect(() => {
+    loadProducts();
+  }, []);
 
-  const clearFilters = () => {
-    setSearchInput('');
-    setSelectedCategory('');
-    setSortBy('newest');
-  };
+  const renderStars = (rating: number) => {
+    const stars = [];
+    const fullStars = Math.floor(rating);
+    const hasHalfStar = rating % 1 >= 0.5;
 
-  const getPromotionalPrice = (product: Product) => {
-    if (!product.promotion) return null;
-
-    if (product.promotion.type === 'discount' && product.promotion.total_price) {
-      return product.promotion.total_price;
+    for (let i = 0; i < 5; i++) {
+      if (i < fullStars) {
+        stars.push(
+          <Star
+            key={i}
+            className="h-4 w-4 text-yellow-400"
+            fill="currentColor"
+          />
+        );
+      } else if (i === fullStars && hasHalfStar) {
+        stars.push(
+          <Star
+            key={i}
+            className="h-4 w-4 text-yellow-400"
+            fill="currentColor"
+            strokeWidth={3}
+          />
+        );
+      } else {
+        stars.push(
+          <Star
+            key={i}
+            className="h-4 w-4 text-gray-300"
+          />
+        );
+      }
     }
-
-    return null;
+    return stars;
   };
 
-  const getPromotionLabel = (product: Product) => {
-    if (!product.promotion) return null;
+  const renderProduct = ({ item: product }: { item: Product }) => (
+    <Link href={`/product/${product.id}`} asChild>
+      <TouchableOpacity style={styles.productCard}>
+        <Image
+          source={{ uri: product.images[0] }}
+          style={styles.productImage}
+          resizeMode="cover"
+        />
+        <View style={styles.productInfo}>
+          <Text style={styles.productName} numberOfLines={1}>
+            {product.name}
+          </Text>
+          <Text style={styles.productPrice}>
+            ${product.price.toFixed(2)}
+          </Text>
+          
+          {/* Rating Section */}
+          <div className="flex items-center mt-1">
+            <div className="flex items-center">
+              {renderStars(product.average_rating || 0)}
+            </div>
+            <span className="ml-2 text-sm text-gray-600">
+              {product.review_count ? (
+                <>
+                  ({product.average_rating?.toFixed(1)}) 
+                  <span className="text-gray-500">
+                    {product.review_count} {product.review_count === 1 ? 'reseña' : 'reseñas'}
+                  </span>
+                </>
+              ) : (
+                <span className="text-gray-500">Sin calificaciones</span>
+              )}
+            </span>
+          </div>
 
-    switch (product.promotion.type) {
-      case '2x1':
-        return 'Lleva 2, paga 1';
-      case '3x1':
-        return 'Lleva 3, paga 1';
-      case '3x2':
-        return 'Lleva 3, paga 2';
-      case 'discount':
-        if (product.promotion.total_price) {
-          const discount = Math.round((1 - (product.promotion.total_price / product.price)) * 100);
-          return `${discount}% OFF`;
-        }
-        return null;
-      default:
-        return null;
-    }
-  };
+          {product.stock > 0 ? (
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={(e) => {
+                e.preventDefault();
+                cartStore.addItem(product, 1);
+              }}
+            >
+              <Text style={styles.addButtonText}>Agregar al carrito</Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.outOfStock}>Agotado</Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    </Link>
+  );
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {[...Array(6)].map((_, i) => (
-          <div key={i} className="bg-white p-4 rounded-lg shadow animate-pulse">
-            <div className="h-48 bg-gray-200 rounded-md mb-4"></div>
-            <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-          </div>
-        ))}
-      </div>
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
     );
   }
 
   if (error) {
     return (
-      <div className="text-center py-12">
-        <div className="bg-red-50 p-4 rounded-lg inline-block">
-          <p className="text-red-800 mb-4">{error}</p>
-          <button
-            onClick={loadProducts}
-            className="bg-red-100 text-red-700 px-4 py-2 rounded-md hover:bg-red-200 transition-colors"
-          >
-            Reintentar
-          </button>
-        </div>
-      </div>
+      <View style={styles.centerContainer}>
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={loadProducts}>
+          <Text style={styles.retryButtonText}>Reintentar</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Buscar productos..."
-            className="pl-10 pr-4 py-2 w-full border rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-          />
-        </div>
-        <select
-          value={selectedCategory}
-          onChange={(e) => setSelectedCategory(e.target.value)}
-          className="px-4 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-        >
-          <option value="">Todas las categorías</option>
-          {categories.map(category => (
-            <option key={category} value={category}>{category}</option>
-          ))}
-        </select>
-        <select
-          value={sortBy}
-          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-          className="px-4 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-        >
-          <option value="newest">Más recientes</option>
-          <option value="price_asc">Precio: Menor a mayor</option>
-          <option value="price_desc">Precio: Mayor a menor</option>
-        </select>
-        {(searchInput || selectedCategory || sortBy !== 'newest') && (
-          <button
-            onClick={clearFilters}
-            className="px-4 py-2 text-gray-600 hover:text-gray-800 flex items-center"
-          >
-            <X className="h-5 w-5 mr-1" />
-            Limpiar filtros
-          </button>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {products.map((product) => (
-          <Link
-            key={product.id}
-            to={`/product/${product.id}`}
-            className="bg-white rounded-lg shadow-md overflow-hidden transition-transform hover:scale-105"
-          >
-            <div className="relative">
-              <img
-                src={product.images?.[0]}
-                alt={product.name}
-                className="w-full h-48 object-cover"
-                onError={(e) => {
-                  const target = e.target as HTMLImageElement;
-                  target.src = 'https://via.placeholder.com/400x300?text=No+Image';
-                }}
-              />
-              {product.available_colors && product.available_colors.length > 0 && (
-                <div className="absolute top-2 right-2 bg-white rounded-full px-2 py-1 text-xs">
-                  {product.available_colors.length} colores
-                </div>
-              )}
-            </div>
-            <div className="p-4">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">{product.name}</h3>
-              <p className="text-gray-600 text-sm mb-4 line-clamp-2">{product.description}</p>
-              <div className="flex justify-between items-center">
-                <div className="flex flex-col">
-                  {product.promotion ? (
-                    <>
-                      <span className="text-sm text-gray-500 line-through">
-                        ${product.price.toFixed(2)}
-                      </span>
-                      <span className="text-lg font-bold text-red-600">
-                        ${getPromotionalPrice(product)?.toFixed(2) || product.price.toFixed(2)}
-                      </span>
-                      {getPromotionLabel(product) && (
-                        <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                          <Tag className="h-3 w-3 mr-1" />
-                          {getPromotionLabel(product)}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-lg font-bold text-gray-900">
-                      ${product.price.toFixed(2)}
-                    </span>
-                  )}
-                </div>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={(e) => handleAddToCart(product, e)}
-                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
-                  >
-                    <ShoppingCart className="h-5 w-5" />
-                  </button>
-                  <button
-                    onClick={(e) => handleBuyNow(product, e)}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
-                  >
-                    Comprar
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
+    <FlatList
+      data={products}
+      renderItem={renderProduct}
+      keyExtractor={(item) => item.id}
+      numColumns={2}
+      contentContainerStyle={styles.grid}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    />
   );
 }
+
+const styles = StyleSheet.create({
+  grid: {
+    padding: 10,
+  },
+  productCard: {
+    flex: 1,
+    margin: 5,
+    backgroundColor: 'white',
+    borderRadius: 8,
+    overflow: 'hidden',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  productImage: {
+    width: '100%',
+    height: 150,
+  },
+  productInfo: {
+    padding: 10,
+  },
+  productName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+    color: theme.colors.text,
+  },
+  productPrice: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: theme.colors.primary,
+    marginBottom: 8,
+  },
+  addButton: {
+    backgroundColor: theme.colors.primary,
+    padding: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  addButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  outOfStock: {
+    color: theme.colors.error,
+    textAlign: 'center',
+    padding: 8,
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorText: {
+    color: theme.colors.error,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+  },
+  retryButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+});
